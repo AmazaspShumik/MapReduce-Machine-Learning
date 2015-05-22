@@ -1,4 +1,13 @@
+'''
+Initialisation step for MapReduce implementation of GMM.
 
+Using MapReduce paradigm samples data from large dataset, so that sample fits
+into one machine, then run K-means algorithm on sampled datato find centroids 
+and cluster allocation of points.
+Cluster allocation of data points is used to get initial parameters for GMM 
+(i.e. : mixing coefficients (pdf of latent variable), mean vectors and covariance
+matrix for each cluster)
+'''
 
 from mrjob.protocol import RawValueProtocol,JSONProtocol, JSONValueProtocol
 from mrjob.job import MRJob
@@ -7,16 +16,32 @@ import random
 import heapq
 import numpy as np
 
+
+
 def extract_features(line):
     ''' extracts features from line of input'''
     data = line.strip().split(",")
     return [ float(e) for e in data[1:] ]
 
 
+#########################  K-means ###########################################
+
+
 class KmeansInitGMM(object):
     '''
-    K-means algorihm that is used to initialise parameters of GMM.
-    This K-means is runned on small subset of data.
+    K-means algorihm for clustering.
+
+    Parameters:
+    -----------
+    
+    clusters           - (int)   number of expected clusters
+    dim                - (int)   dimensionality of input
+    epsilon            - (float) convergence threshold for k-means
+    iteration_limit    - (int)   maximum number of iteration, where each 
+                                 iteration consists of e_step and m_step
+    data               - (list)  list of lists, where each inner list is 
+                                 single data point
+    
     '''
     
     def __init__(self, clusters, dim, epsilon, iteration_limit, data):
@@ -29,8 +54,9 @@ class KmeansInitGMM(object):
         
         
     def loss(self):
-        ''' calculates loss function of K-means
-            J =  sum_n[ sum_k [r_n_k*||x_n-mu_k||^2]]]
+        ''' 
+        Calculates loss function of K-means
+        J =  sum_n[ sum_k [r_n_k*||x_n-mu_k||^2]]]
         '''
         r = self.r
         mu = self.clusters
@@ -58,9 +84,7 @@ class KmeansInitGMM(object):
 
             
     def m_step(self):
-        ''' M-step in K-means algorithm, finds centroids that will minimise 
-            loss function
-        '''
+        ''' M-step in K-means algorithm, finds centroids that minimise loss function'''
         self.clusters = [[0]*self.m for i in range(self.k)] # update clusters
         cluster_counts = [0]*self.k
         for i,x in enumerate(self.data):
@@ -71,8 +95,8 @@ class KmeansInitGMM(object):
             
     
     def run_k_means(self):
-        ''' single pass of k-means algorithm. Since loss function is not convex,
-            it is not guaranteed that resulted output will minimise k-means
+        ''' 
+        Runs single pass of k-means algorithm
         '''
         self.initialise() # initialise clusters
         next_loss = self.loss() # calculate loss function for initial clusters
@@ -89,7 +113,15 @@ class KmeansInitGMM(object):
         
             
     def run(self, reruns = 10):
-        ''' Reruns k-means algorithm to find optimal solution'''
+        ''' 
+        Runs k-means several times and choosed and chooses parameters (mean vectors,
+        point cluster allocation) from the k-means run with smallest value of 
+        loss function.
+        
+        (Since loss function is not convex,it is not guaranteed that parameters 
+        obtained from single k-means algorithm pass will give global minimum
+        of k-means loss function)
+        '''
         clusters = [[0]*self.m for i in range(self.k)]
         loss_before = -1
         r = self.r
@@ -111,7 +143,10 @@ class KmeansInitGMM(object):
         
         
     def gmm_params(self):
-        ''' calculates initial parameters for GMM based on best k-means result'''
+        ''' 
+        Calculates initial parameters for GMM based on cluster allocation of
+        points in best K-means
+        '''
         total=0
         mixing = [0]*self.k
         covars = [np.zeros([self.m,self.m], dtype = np.float64) for i in range(self.k)]
@@ -134,10 +169,30 @@ class KmeansInitGMM(object):
         return {"mixing":mixing,"mu":mu,"covariance":covariance}
 
         
-######## map-reduce job, intialises parameters of Gaussian Mixture Model ######
+########  intialise parameters of Gaussian Mixture Model #####################
 
 
 class InitialiseGaussianMixtureMR(MRJob):
+    '''
+    MapReduce class that initialises parameters of GMM.
+    Each mapper assigns random priority to each line of input, chooses n (n = sample size)
+    lines with lowest priority level and outputs it.
+    Single reducer collects m (where m is number of mappers) lists of size n
+    and choses n lines with smallest priority, these final n lines of input
+    represent random sample of size n from data. Then k-means algorithm is used
+    on sampled data to find parameters for initialising.
+           
+    Command Line Options:
+    ---------------------
+    
+    --sample-size          - sample size
+    --clusters             - number of clusters
+    --dimensions           - dimensionality of data
+    --kmeans-convergence   - convergence threshold for k-means convergence
+    --iteration-limit      - limit on number of iterations for k-means
+    --kmeans-reruns        - number of times to run k-means
+    
+    '''
     
     
     INPUT_PROTOCOL = RawValueProtocol
@@ -166,9 +221,13 @@ class InitialiseGaussianMixtureMR(MRJob):
                                     default = 0.01,
                                     help = "convergence parameter for K-means loss function")
         self.add_passthrough_option("--iteration-limit",
-                                   type = int,
-                                   default = 100,
-                                   help = "largest number of iterations that k-means algorithm is allowed")                                    
+                                    type = int,
+                                    default = 100,
+                                    help = "largest number of iterations that k-means algorithm is allowed")
+        self.add_passthrough_option("--kmeans-reruns",
+                                    type = int,
+                                    default = 10,
+                                    help = "number of k-means reruns ")
                                     
                                 
                                     
@@ -192,6 +251,11 @@ class InitialiseGaussianMixtureMR(MRJob):
             
             
     def mapper_initialise_gmm(self,_,line):
+        '''
+        Randomly samples n lines of input (where n is sample_size option), by
+        assigning random priority level and then choosing n lines of input 
+        with smallest priority level
+        '''
         r = random.randrange(1000000)
         if len(self.pq) < self.n:
             heapq.heappush(self.pq,(r,line))
@@ -203,6 +267,10 @@ class InitialiseGaussianMixtureMR(MRJob):
         yield 1, self.pq
         
     def reducer_kmeans_initialise_gmm(self,key,samples):
+        '''
+        Subsamples from mapper output and runs K-means algorithm on subsampled
+        data to initialise parameters of GMM.        
+        '''
         pq_final = []
         for sample in samples:
             for element in sample:
@@ -215,7 +283,7 @@ class InitialiseGaussianMixtureMR(MRJob):
                         heapq.heappushpop(pq_final,element)
         lines = [line for r,line in pq_final]
         kmeans = KmeansInitGMM(self.k, self.dim, self.options.kmeans_convergence,self.options.iteration_limit,lines)
-        kmeans.run(reruns = 10)
+        kmeans.run(reruns = self.options.kmeans_reruns)
         params = kmeans.gmm_params()
         yield None, params
         
@@ -227,6 +295,5 @@ class InitialiseGaussianMixtureMR(MRJob):
                        
 if __name__=="__main__":
     InitialiseGaussianMixtureMR.run()
-    
     
     
