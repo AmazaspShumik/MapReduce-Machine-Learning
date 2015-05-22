@@ -10,15 +10,17 @@ def multivar_gauss_pdf(x, mu, cov):
     '''
     Caculates the multivariate normal density (pdf)
     
-    Input:
+    Parameters:
+    -----------
     
-    x - numpy array of a "d x 1" sample vector
-    mu - numpy array of a "d x 1" mean vector
-    cov - numpy array of a d x d" covariance matrix
+    x    - numpy array of a "d x 1" sample vector
+    mu   - numpy array of a "d x 1" mean vector
+    cov  - numpy array of a d x d" covariance matrix
     
     (where d - dimensionality of data)
 
     Output:
+    -------
             - (float) probability of x given parameters of 
                      Gaussian Distribution
     '''
@@ -32,13 +34,14 @@ def responsibility(x,mu,cov,p,K):
     Calculates conditional probability of latent variable given
     observed data and parameters
     
-    Input:
+    Parameters:
+    -----------
     
-    x - numpy array of a "d x 1" sample vector
-    mu - list of length "K" of lists "d x 1" mean vector 
-    cov - list of length "K" numpy arrays each "d x d" covariance matrix
-    p - list of floats, each float prior probability of cluster
-    K - number of clusters (values of latent variables)
+    x     - numpy array of a "d x 1" sample vector
+    mu    - list of length "K" of lists "d x 1" mean vector 
+    cov   - list of length "K" numpy arrays each "d x d" covariance matrix
+    p     - list of floats, each float prior probability of cluster
+    K     - number of clusters (values of latent variables)
     
     (where d - dimensionality of data)
     
@@ -58,7 +61,25 @@ def extract_features(line):
     
     
 def make_json_encodable(mixing, means, covar):
-    """ transforms """
+    '''
+    Transforms 
+    
+    Parameters:
+    -----------
+    
+    mixing   - list of size k
+    means    - list of size k of numpy arrays (each numpy array has size d)
+    covar    - list of size k of two dimensional numpy array (matrix of size dxd)
+    
+    (where d is dimensionality and k is number of clusters)
+
+    Output:
+    --------
+             - dictionary with parameter names as keys 
+             {"mu": list of mean vectors, "mixing": list of mixing coefficients,
+              "covariance": list of covariance matrices}
+    
+    '''
     matrix_to_list = lambda x: [list(e) for e in x]
     mixing = mixing
     means = matrix_to_list(means)
@@ -68,7 +89,22 @@ def make_json_encodable(mixing, means, covar):
 
    
 class IterationGaussianMixtureMR(MRJob):
+    '''
+    Runs single iteration of Expectation Maximization Algorithm for Gaussian
+    Mixture Model.
     
+    Mappers use parameters from previous iteration to calculate responsibilities
+    and intermediate values that are then used by single reducer to calculate
+    new parameters.
+    
+    Command Line Options:
+    ---------------------
+    
+    --clusters             - number of clusters
+    --dimensions           - dimensionality of data
+    --parameters           - (str)json encoded dictionary of parameters
+    
+    '''
     INPUT_PROTOCOL = RawValueProtocol
     
     INTERNAL_PROTOCOL = JSONProtocol
@@ -134,10 +170,14 @@ class IterationGaussianMixtureMR(MRJob):
         
     def mapper_final_gmm(self):
         matrix_to_list = lambda x: [list(e) for e in x]
-        yield 1,("r_sum", self.resp_sum)                                       # sum of responsibilities
-        yield 1,("r_w_sum", [list(e) for e in self.resp_w_sum])                # sum of observations weighted by responsibility
-        yield 1,("r_w_cov", [ matrix_to_list(cov) for cov in self.resp_w_cov]) # covariates weighted by responsibility
-        yield 1,("total", self.N)                                              # number of observations
+        # sum of responsibilities
+        yield 1,("r_sum", self.resp_sum)      
+        # sum of observations weighted by responsibility
+        yield 1,("r_w_sum", [list(e) for e in self.resp_w_sum])
+        # covariates weighted by responsibility
+        yield 1,("r_w_cov", [ matrix_to_list(cov) for cov in self.resp_w_cov])
+        # number of observations
+        yield 1,("total", self.N)                                              
         
     
     def reducer_gmm(self,key, values):
