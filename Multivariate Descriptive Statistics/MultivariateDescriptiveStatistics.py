@@ -6,8 +6,19 @@ from mrjob.protocol import RawValueProtocol, JSONProtocol, JSONValueProtocol
 import numpy as np
 
 
-########################  Helper functions  ###################################
+########################  Helper functions & classes ##########################
 
+class DimensionalityMismatch(Exception):
+    
+    def __init__(self,expected,real):
+        self.exp = expected
+        self.real = real
+        
+    def __str__(self):
+        error = "Dimensionality mismatch. "+"Expected: "+str(self.exp)+" real: "+ str(self.real)
+        return error
+        
+        
 def extract_relevant_features(l):
     '''
     Extracts quantitative features for which summary statistics should be calculated
@@ -105,6 +116,7 @@ class MultivariateDescriptiveStatisticsMR(MRJob):
         else:
             self.dim =  self.options.dimensions
 
+
     def mapper_covar(self,_,line):
         # extract features that you want to analyse
         variables = MultivariateDescriptiveStatisticsMR.extract_relevant_features(line)
@@ -117,6 +129,7 @@ class MultivariateDescriptiveStatisticsMR(MRJob):
         self.fourth_order = [p+var**4 for var in variables for p in self.fourth_order]
         self.covariates += np.outer(np.array(variables),np.array(variables))
         
+        
     def mapper_covar_final(self):
         yield 1,("max", self.max)
         yield 1,("min", self.min)
@@ -125,6 +138,7 @@ class MultivariateDescriptiveStatisticsMR(MRJob):
         yield 1,("third order", self.third_order)
         yield 1,("fourth order", self.fourth_order)
         yield 1,("covariates", [list(row) for row in self.covariates])
+        
         
     def reducer_summarise(self,key,values):
         m = self.dim
