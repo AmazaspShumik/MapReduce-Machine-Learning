@@ -1,15 +1,64 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Tue May  5 16:11:14 2015
-
-@author: amazaspshaumyan
-"""
 
 from mrjob.job import MRJob
 from mrjob.step import MRStep
-from mrjob.protocol import RawValueProtocol, JSONProtocol
+from mrjob.protocol import RawValueProtocol, JSONProtocol, JSONValueProtocol
 import numpy as np
 
+
+########################  Helper functions  ###################################
+
+def extract_relevant_features(l):
+    '''
+    Extracts quantitative features for which summary statistics should be calculated
+    '''
+    data = l.strip().split(",")
+    return [float(e) for e in data[1:5]]
+        
+def kurtosis(p4,covariance,n):
+    '''
+    Calcultes unbiased kurtosis (see Joanes and Gill (1998)).
+    
+    
+    Input:
+    ------
+    
+    p4         - list of size m, where each entry is sum of fourth order feature.
+    covariance - two-dimensional list of size m x m, which is outer
+                 product of input matrix with itself
+    n          - number of observations
+    
+    Output:
+    -------
+               - (float) kurtosis
+               
+    [where m is dimensionality of data]
+    '''
+    kurtosis_standard = [ (kurt/n)/((n-1)*covariance[i,i]/n)**2 -3 for i,kurt in enumerate(p4)]
+    kurtosis_unbiased = [ (kurt*(n+1)+6)*(n-1)/(n-2)/(n-3) for kurt in kurtosis_standard]
+    return kurtosis_unbiased
+
+def skewed(p3,covariance,n):
+    '''    
+    Calcultes skeweness
+
+    Input:
+    ------
+    
+    p3         - list of size m, where each entry is sum of cubes of each feature.
+    covariance - two-dimensional list of size m x m, which is outer
+                 product of input matrix with itself
+    n          - number of observations
+    
+    Output:
+    -------
+               - (float) kurtosis
+    
+    [where m is dimensionality of data]
+    '''
+    return [np.sqrt(n*(n-1))/(n-2)*((skew/n)/(((n-1)*covariance[i,i]/n)**1.5)) for i,skew in enumerate(p3)]
+    
+########################## MapReduce Job ######################################
 
 class MultivariateDescriptiveStatisticsMR(MRJob):
     ''' 
@@ -19,7 +68,7 @@ class MultivariateDescriptiveStatisticsMR(MRJob):
     
        - Covariance Matrix 
        - Skewness of each variable (measure of assymetry)
-       - Kurtosis of each variable (measure of peakedess)
+       - Kurtosis of each variable (measure of peakedness)
        - Minimum for each variable
        - Maximum for each variable
        - Mean for each variable
@@ -32,23 +81,7 @@ class MultivariateDescriptiveStatisticsMR(MRJob):
     
     INTERNAL_PROTOCOL = JSONProtocol
     
-    OUTPUT_PROTOCOL = RawValueProtocol
-    
-    @staticmethod
-    def extract_relevant_features(l):
-        ''' (str) --> list
-        extracts features relevant for task from each line.
-        '''
-        data = l.strip().split(",")
-        return [float(e) for e in data[1:5]]
-        
-    @staticmethod
-    def kurtosis():
-        pass
-    
-    @staticmethod
-    def skewness():
-        pass
+    OUTPUT_PROTOCOL = JSONValueProtocol
     
     
     def __init__(self, *args, **kwargs):
@@ -122,26 +155,18 @@ class MultivariateDescriptiveStatisticsMR(MRJob):
         p4 = [p4[i]-4*means[i]*p3[i]+6*(means[i]**2)*(covar_matr[i,i])-4*p1[i]*(means[i]**3)+n*means[i]**4 for i in range(m)]
         # third moment: calculate sum((x_i-mean(x))^3) by decompsing it
         p3 = [p3[i]-3*means[i]*covar_matr[i,i]+3*(means[i]**2)*p1[i] - n*means[i]**3 for i in range(m)]     
-        # calculate kurtosis for each variable
-        kurtosis_standard = [ (kurt/n)/((n-1)*covariance[i,i]/n)**2 -3 for i,kurt in enumerate(p4)]
-        # unbised kurtosis (see Joanes and Gill (1998))
-        kurtosis_unbiased = [ (kurt*(n+1)+6)*(n-1)/(n-2)/(n-3) for kurt in kurtosis_standard]
-        # calculate skewness for each variable
-        skewness = [np.sqrt(n*(n-1))/(n-2)*((skew/n)/(((n-1)*covariance[i,i]/n)**1.5)) for i,skew in enumerate(p3)]
-        kurtosis_unbiased.append("kurtosis")
-        yield None, ",".join([str(kurt) for kurt in kurtosis_unbiased])     
-        skewness.append("skewness")
-        yield None, ",".join([str(skew) for skew in skewness])
-        means.append("mean")
-        yield None, ",".join([str(mu) for mu in means])
-        min_list.append("min")
-        yield None, ",".join([str(min_e) for min_e in min_list])
-        max_list.append("max")
-        yield None, ",".join([str(max_e) for max_e in max_list])
-        for i in range(m):
-            row = list(covariance[i,:])
-            row.extend(["cov",str(i)])
-            yield None, ",".join([str(e) for e in row])
+        kurtosis_unbiased = kurtosis(p4,covariance,n)  # calculate kurtosis for each variable
+        skewness = skewed(p3,covariance,n)             # calculate skewness for each variable
+        matrix_to_list = lambda x: [list(e) for e in x]
+        covariance = matrix_to_list(covariance)
+        summary_statistics = {"mean":          means,
+                              "max":           max_list,
+                              "min":           min_list,
+                              "covariance":    covariance,
+                              "skewness":      skewness,
+                              "kurtosis":      kurtosis_unbiased,
+                              "observations":  n }
+        yield None, summary_statistics
         
         
     def steps(self):
