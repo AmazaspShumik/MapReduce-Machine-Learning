@@ -50,7 +50,7 @@ class KnnMapReduce(MRJob):
         self.add_passthrough_option("--n-neighbours",
                                     type = int,
                                     help = "number of neighbours used in classification or regression")
-                                    
+                                     
     def load_options(self,args):
         super(KnnMapReduce,self).load_options(args)
         # feature dimensionality
