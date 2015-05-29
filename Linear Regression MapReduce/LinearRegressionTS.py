@@ -31,7 +31,7 @@ def cholesky_solution_linear_regression(x_t_x,x_t_y):
     #  solve L*z = x_t_y
     z = np.linalg.solve(L,x_t_y)
     #  solve L.T*Theta = z
-    theta = np.linalg.solve(np.transpose(L,z))
+    theta = np.linalg.solve(np.transpose(L),z)
     return theta
     
    
@@ -118,7 +118,7 @@ class LinearRegressionTS(MRJob):
         super(LinearRegressionTS,self).configure_options()
         self.add_passthrough_option("--dimension", 
                                     type = int,
-                                    help = "Number of explanatory variables")
+                                    help = "Number of explanatory variables (do not count bias term)")
         self.add_passthrough_option("--bias", 
                                     type = str, # (got error when tried to define bool) ???
                                     help = "Bias term, bias not included if anything other than 'True' ",
@@ -141,11 +141,11 @@ class LinearRegressionTS(MRJob):
         Calculates x_t_x and x_t_y for data processed by each mapper
         '''
         y,features = self.extract_variables(line)
+        if len(features) != self.dim:
+            raise DimensionMismatchError(self.dim,len(features))
         if self.options.bias is "True":
             features.append(1.0)
         x = np.array(features)
-        if len(features) != self.dim:
-            raise DimensionMismatchError(self.dim,len(features))
         self.x_t_x+=np.outer(x, x)
         self.x_t_y+=y*x
         self.counts+=1
@@ -175,8 +175,8 @@ class LinearRegressionTS(MRJob):
                 x_t_y+=np.array(val[1])
             elif val[0]=="counts":
                 observations+=val[1]
-        betas =  np.dot(np.linalg.pinv(x_t_x),x_t_y)
-        yield None, ",".join([ str(e) for e in betas])
+        betas = cholesky_solution_linear_regression(x_t_x,x_t_y)
+        yield None,[e for e in betas]
             
     def steps(self):
         '''Defines map-reduce steps '''
