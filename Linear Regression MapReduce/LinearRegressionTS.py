@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+
 from mrjob.job import MRJob
 from mrjob.protocol import JSONProtocol, RawValueProtocol
 from mrjob.step import MRStep
@@ -94,26 +95,20 @@ class LinearRegressionTS(MRJob):
     def __init__(self,*args, **kwargs):
         super(LinearRegressionTS, self).__init__(*args, **kwargs)
         n = self.options.dimension
-        self.construct_features = lambda x: LinearRegressionTS.extract_variables(x,self.options.bias)
         self.x_t_x = np.zeros([n,n])
         self.x_t_y = np.zeros(n)
         self.counts = 0
         
     #--------------------------- feature extraction --------------------------#
         
-    @staticmethod
-    def extract_variables(line, bias = True):
+    def extract_variables(self,line):
         ''' (str)--(float,[float,float,float...])
-        reads line of input and outputs dependent variable and list of 
-        explanatory variables.  You may add higher order polynomials and other
-        ( You may need to override this method if you use this code for 
-        different dataset)
+        Extracts set of relevant features. (Needs to be rewriten depending
+        on file input structure) 
         '''
-        data = line.strip().split(",")
-        features = [float(e) for e in data[1:]]
-        if bias:
-            features.append(1.0) # adds bias term
-        return (float(data[0]),features)
+        data = [float(e) for e in line.strip().split(",")]
+        y,features = data[0],data[1:]
+        return (y,features)
         
         
     #---------------------------- Options ------------------------------------#
@@ -121,17 +116,17 @@ class LinearRegressionTS(MRJob):
     def configure_options(self):
         ''' Additional options'''
         super(LinearRegressionTS,self).configure_options()
-        self.add_passthroogh_option("--dimension", 
+        self.add_passthrough_option("--dimension", 
                                     type = int,
                                     help = "Number of explanatory variables")
         self.add_passthrough_option("--bias", 
-                                    type = bool,
-                                    help = "Bias term, bias not included if false ",
-                                    default = True)
+                                    type = str, # (got error when tried to define bool) ???
+                                    help = "Bias term, bias not included if anything other than 'True' ",
+                                    default = "True")
                                     
-    def load_options(self):
+    def load_options(self,args):
         ''' Loads and checks whether options are provided'''
-        super(LinearRegressionTS,self).load_options()
+        super(LinearRegressionTS,self).load_options(args)
         if self.options.dimension is None:
             self.option_parser.error("You should define number of explanatory variables")
         else:
@@ -145,7 +140,9 @@ class LinearRegressionTS(MRJob):
         '''
         Calculates x_t_x and x_t_y for data processed by each mapper
         '''
-        y,features = self.construct_features(line)
+        y,features = self.extract_variables(line)
+        if self.options.bias is "True":
+            features.append(1.0)
         x = np.array(features)
         if len(features) != self.dim:
             raise DimensionMismatchError(self.dim,len(features))
