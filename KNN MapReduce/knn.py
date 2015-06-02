@@ -2,7 +2,7 @@
 
 
 from mrjob.job import MRJob
-from mrjob.protocol import RawValueProtocol,JSONProtocol,JSONValueProtocol
+from mrjob.protocol import RawValueProtocol,JSONProtocol
 from mrjob.step import MRStep
 import heapq
 import csv
@@ -10,8 +10,8 @@ import csv
 
 ################# Helper functions & classes ##################################
 
-def dist_euclid(self,x,y):
-    ''' define euclidean distance between two vector-lists'''
+def dist(x,y):
+    ''' defines euclidean distance between two vector-lists'''
     return sum([(x[i] - e)**2 for i,e in enumerate(y)])
 
 
@@ -33,17 +33,49 @@ class DimensionalityMismatchError(Exception):
 class KnnMapReduce(MRJob):
     '''
     K nearest neighbours algorithm for classification and regression.
+    Assumes that number of data points to be estimated is small and can be fitted
+    int single machine.
     
     
+    Input File:
+    -----------
+    
+          Extract relevant features from input line by changing extract_features
+          method.  Current code assumes following input line format:
+         
+          <non_informative_index>,<feature 1>,<feature 2>,...,< dependent variable >
+      
+    
+    Options:
+    -------
+         --dimensionality         - number of dimensions in explanatory variables
+         --knn-type               - type of estimation (should be either 'regression' 
+                                    or 'classification')
+         --n-neighbours           - number of nearest neighbours used for estimation
+         --points-to-estimate     - file containing points that need to be estimated
     
     
+    Output:
+    -------
+         Output line format:
+          
+         <feature 1>,<feature 2>,<feature 3>,< estimated dependent variable >
+
     '''
     
     INPUT_PROTOCOL = RawValueProtocol
     
     INTERNAL_PROTOCOL = JSONProtocol
     
-    OUTPUT_PROTCOL = JSONValueProtocol
+    OUTPUT_PROTOCOL = RawValueProtocol
+    
+    def __init__(self,*args,**kwargs):
+        super(KnnMapReduce,self).__init__(*args,**kwargs)
+        with open(self.options.points_to_estimate,"r") as input_file:
+            data = list(csv.reader(input_file))
+        self.points = {}
+        for dp in data:
+            self.points[tuple([float(e) for e in dp])] = []
     
         
     #################### load & configure options #############################
@@ -59,12 +91,15 @@ class KnnMapReduce(MRJob):
         self.add_passthrough_option("--n-neighbours",
                                     type = int,
                                     help = "number of neighbours used in classification or regression")
+        self.add_file_option("--points-to-estimate",
+                             type = "str",
+                             help = "File containing all points that should be estimated")
                                     
                                      
     def load_options(self,args):
         super(KnnMapReduce,self).load_options(args)
         # feature dimensionality
-        if self.options.dimensioanlity is None:
+        if self.options.dimensionality is None:
             self.option_parser.error("You need to specify feature dimensionality")
         else:
             self.dim = self.options.dimensionality
@@ -78,29 +113,19 @@ class KnnMapReduce(MRJob):
             self.option_parser.error("You need to specify number of nearest neighbours")
         else:
             self.n_neighbours = self.options.n_neighbours
+        if self.options.points_to_estimate is None:
+            self.option_parser.error("You need to specify file containing points which needs to be estimated")
     
     ################# Helper functions for extracting features ################
             
     def extract_features(self,line):
         ''' Extracts data from line of input '''
-        data = line.strip.split(",")
-        return (data[1], [ float(e) for e in data[2:] ])
+        data = line.strip().split(",")
+        return (data[-1], [ float(e) for e in data[1:-1] ])
         
         
     ################# Map - Reduce Job ######################################## 
-    
             
-    def mapper_knn_init(self):
-        ''' 
-        Loads data points for which classification or regression estimates 
-        are required
-        '''
-        with open("input_points.txt","r") as input_file:
-            data = list(csv.reader(input_file))
-        self.points = {}
-        for dp in data:
-            self.points[dp] = []
-        
             
     def mapper_knn(self,_,line):
         '''
@@ -112,7 +137,7 @@ class KnnMapReduce(MRJob):
             raise DimensionalityMismatchError(self.dim,len(features))
         # for each point select n neighbours that are closest to it
         for dp in self.points:
-           d_inv = -1*self.dist_euclid(features,dp)
+           d_inv = -1*dist(features,dp)
            observation = tuple([d_inv,features,y])
            # if number of nearest neighbours is smaller than threshold add them
            if len(self.points[dp]) < self.n_neighbours:
@@ -125,22 +150,25 @@ class KnnMapReduce(MRJob):
               if d_inv > largest_neg_dist:
                  heapq.heapreplace(self.points[dp],observation)
 
-
     def mapper_knn_final(self):
-        yield None,self.points
+        yield 1, self.points.items()
         
         
     def reducer_knn(self,key,points):
         '''
         Aggregates mapper output
         '''
-        merged = None
-        for mapper_closest_points in points:
+        for mapper_neighbors in points:
+            merged = None
+            mapper_knn = {}
+            for k,v in mapper_neighbors:
+                mapper_knn[tuple(k)] = v
+            # process mapper outputs and find closest points
             if merged is None:
-                merged = mapper_closest_points
+                merged = mapper_knn
             else:
                 for point in merged.keys():
-                    pq = mapper_closest_points[point]
+                    pq = mapper_knn[point]
                     while pq:
                           if len(merged[point]) < self.n_neighbours:
                              heapq.heappush(merged[point],heapq.heappop(pq))
@@ -151,14 +179,14 @@ class KnnMapReduce(MRJob):
         for point in merged.keys():
             # regression
             if self.options.knn_type == "regression":
-                estimates = [ observation[-1] for observation in merged[point]]
+                estimates = [ float(observation[-1]) for observation in merged[point]]
                 estimate = sum(estimates)/self.options.n_neighbours
             # classification
             else:
                 estimates = {}
                 for neg_dist,features,y in merged[point]:
                     estimates[y] = estimates.get(y,0) + 1
-                estimate,counts = max(estimates.items,key = lambda x: x[-1])
+                estimate,counts = max(estimates.items(),key = lambda x: x[-1])
             # format output
             output = list(point)
             output.append(estimate)
@@ -166,8 +194,7 @@ class KnnMapReduce(MRJob):
             
             
     def steps(self):
-        return [MRStep(mapper_init  = self.mapper_knn_init,
-                       mapper       = self.mapper_knn,
+        return [MRStep(mapper       = self.mapper_knn,
                        mapper_final = self.mapper_knn_final,
                        reducer      = self.reducer_knn)]
                        
