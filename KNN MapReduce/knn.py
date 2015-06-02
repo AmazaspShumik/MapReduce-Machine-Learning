@@ -34,7 +34,7 @@ class KnnMapReduce(MRJob):
     '''
     K nearest neighbours algorithm for classification and regression.
     Assumes that number of data points to be estimated is small and can be fitted
-    int single machine.
+    into single machine.
     
     
     Input File:
@@ -151,19 +151,26 @@ class KnnMapReduce(MRJob):
                  heapq.heapreplace(self.points[dp],observation)
 
     def mapper_knn_final(self):
+        '''
+        Each mapper outputs dictionary with key being data point that
+        needs to be estimated and value being priority queue of length 
+        'self.n_neighbours' of observation from training set
+        '''
         yield 1, self.points.items()
         
         
     def reducer_knn(self,key,points):
         '''
-        Aggregates mapper output
+        Aggregates mapper output and finds set of training points which are 
+        closest to point that needs to be estoimated. Then depending on 
+        estimation type ('classification' or 'regression') outputs estimate
         '''
         for mapper_neighbors in points:
             merged = None
             mapper_knn = {}
             for k,v in mapper_neighbors:
                 mapper_knn[tuple(k)] = v
-            # process mapper outputs and find closest points
+            # process mapper outputs and find closest neighbours
             if merged is None:
                 merged = mapper_knn
             else:
