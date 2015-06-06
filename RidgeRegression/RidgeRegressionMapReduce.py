@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+
 from mrjob.job import MRJob
 from mrjob.protocol import RawValueProtocol,JSONProtocol,JSONValueProtocol
 from mrjob.step import MRStep
@@ -9,11 +10,9 @@ import numpy as np
 import random
 
 
+
 class RidgeRegression(MRJob):
     '''
-    
-    
-    
     
     Input File:
     -----------
@@ -45,6 +44,9 @@ class RidgeRegression(MRJob):
     
     def __init__(self,*args,**kwargs):
         super(RidgeRegression,self).__init__(*args,**kwargs)
+        if self.scaling=="max-min":
+            self.max = [0]*self.dim
+            self.min = [0]*self.dim
         self.mu = [0]*self.dim
         self.y_av = 0.0
         self.x_t_x = np.zeros([self.dim,self.dim], dtype = np.float)
@@ -63,6 +65,9 @@ class RidgeRegression(MRJob):
                                     type = int,
                                     help = "Size of sample for hold out cross validation",
                                     default = 1000)
+        self.add_passthrough_option("--scaling",
+                                    type = str,
+                                    help = "Can be 'z-score' or 'max-min' ")
         self.add_file_option("--cv-lambdas",
                              type = "str",
                              help = "Name of file that contains regularisation parameters for cross validation")
@@ -82,7 +87,8 @@ class RidgeRegression(MRJob):
         
     #----------------------------------------- helper functions ----- --------------------------------------------#
         
-    def extract_features(self,line):
+    @staticmethod
+    def extract_features(line):
         '''
         Extracts dependent variable and features from line of input
         '''
@@ -98,6 +104,10 @@ class RidgeRegression(MRJob):
             lambdas = list(csv.reader(csvfile))
         return [float(e) for e in lambdas]
         
+    @staticmethod
+    def join_mapper_intermediate_stats( mapper_dict_one, mapper_dict_two):
+        
+        
         
     #----------------------------------------------- Map - Reduce Job -------------------------------------------#
         
@@ -105,6 +115,9 @@ class RidgeRegression(MRJob):
         y, features = self.extract_features(line)
         x = np.array(features)
         # update instance variables
+        if self.options.scaling=="max-min":
+            self.max = [max(current_max,features[i]) for i,current_max in enumerate(features)]
+            self.min = [max(current_max,features[i]) for i,current_max in enumerate(features)]
         self.mu    = [ av+features[i] for i,av in enumerate(self.mu) ]
         self.x_t_x = np.outer(x,x)
         self.y_av +=y
@@ -128,7 +141,16 @@ class RidgeRegression(MRJob):
                      "y_av":  self.y_av,
                      "n":     self.n}
                      
-    def reducer_ridge(self):
+    def reducer_ridge(self, key, vals):
+        # first calculates unscaled solution
+        final_summary_stats = {"mu":      [0]*self.dim,
+                      "x_t_x":   np.zeros([self.dim,self.dim]),
+                      "y_av":    0,
+                      "n":       0  }
+        for mapper_summary in vals:
+            final_summary_stats = self.join
+        
+        
         
             
         
