@@ -47,9 +47,7 @@ class DimensionMismatchError(Exception):
         return err
     
 
-
 ############################## Map Reduce Job #################################
-
 
 
 class LinearRegressionTS(MRJob):
@@ -95,8 +93,8 @@ class LinearRegressionTS(MRJob):
     def __init__(self,*args, **kwargs):
         super(LinearRegressionTS, self).__init__(*args, **kwargs)
         n = self.options.dimension
-        self.x_t_x = np.zeros([n,n])
-        self.x_t_y = np.zeros(n)
+        self.x_t_x  = np.zeros([n,n])
+        self.x_t_y  = np.zeros(n)
         self.counts = 0
         
     #--------------------------- feature extraction --------------------------#
@@ -146,17 +144,17 @@ class LinearRegressionTS(MRJob):
         if self.options.bias is "True":
             features.append(1.0)
         x = np.array(features)
-        self.x_t_x+=np.outer(x, x)
-        self.x_t_y+=y*x
-        self.counts+=1
+        self.x_t_x  += np.outer(x, x)
+        self.x_t_y  += y*x
+        self.counts += 1
         
     def mapper_lr_final(self):
         '''
         Transforms numpy arrays x_t_x and x_t_y into json-encodable list format
         and sends to reducer
         '''
-        yield 1,("x_t_x", [list(row) for row in self.x_t_x])
-        yield 1,("x_t_y", [xy for xy in self.x_t_y])
+        yield 1,("x_t_x",  [list(row) for row in self.x_t_x])
+        yield 1,("x_t_y",  [xy for xy in self.x_t_y])
         yield 1,("counts", self.counts)
         
     def reducer_lr(self,key,values):
@@ -170,19 +168,19 @@ class LinearRegressionTS(MRJob):
         x_t_x = np.zeros([n,n]); x_t_y = np.zeros(n) 
         for val in values:
             if val[0]=="x_t_x":
-                x_t_x+=np.array(val[1])
+                x_t_x           +=   np.array(val[1])
             elif val[0]=="x_t_y":
-                x_t_y+=np.array(val[1])
+                x_t_y           +=   np.array(val[1])
             elif val[0]=="counts":
-                observations+=val[1]
+                observations    +=   val[1]
         betas = cholesky_solution_linear_regression(x_t_x,x_t_y)
         yield None,[e for e in betas]
             
     def steps(self):
         '''Defines map-reduce steps '''
-        return [MRStep(mapper = self.mapper_lr,
+        return [MRStep(mapper       = self.mapper_lr,
                        mapper_final = self.mapper_lr_final,
-                       reducer = self.reducer_lr)]
+                       reducer      = self.reducer_lr)]
                        
 if __name__=="__main__":
     LinearRegressionTS.run()
